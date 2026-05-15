@@ -1134,6 +1134,7 @@ function randomizeUnlocked() {
     });
 
     applyGenderLock();
+    enforceMaleSelectionCleanUp();
     applyPromoToggle();
     hideDuplicateTopModeCards();
 
@@ -1202,12 +1203,102 @@ function filterChibiConflicts(items) {
   });
 }
 
+
+function selectedGenderModeStrong() {
+  return selectedGenderModeFromRaw ? selectedGenderModeFromRaw() : selectedGenderMode();
+}
+
+const MALE_PROMPT_BLOCK_WORDS = [
+  "female","woman","women","feminine","queen","goddess","girl","auntie","mother daughter","daughter",
+  "beauty makeup","makeup portrait","lashes","lipstick","lip gloss","gloss lips","vinyl shine lips","berry gloss",
+  "pink lips","magenta lip","red lip","face gems","cheekbone rhinestones","rhinestone tear","butterfly face gems",
+  "hair gems","laid edges","edge swoop","silk press","curly bob","waist-length curls","body waves",
+  "bikini","corset","gown","dress","heels","stiletto","rhinestone sandals","nails","hourglass",
+  "curvy hourglass","wide-hipped","voluptuous","soft curves","plus-size carnival beauty"
+];
+
+function hasAnyPromptBlockWord(text, words) {
+  const x = String(text || "").toLowerCase();
+  return words.some(function(word){ return x.includes(word); });
+}
+
+function sanitizeMaleItem(item, bucket) {
+  const x = String(item || "").trim();
+  if (!x || x === "none") return "";
+  const lower = x.toLowerCase();
+
+  if (bucket === "subject") {
+    if (/female|woman|women|feminine|queen|goddess|girl|auntie|mother daughter|daughter|soft feminine/.test(lower)) return "clearly masculine-presenting male carnival performer";
+    if (/curvy hourglass|wide-hipped|voluptuous|soft curves|plus-size carnival beauty|glamorous plus body|thick and glamorous/.test(lower)) return "masculine solid athletic build";
+    if (/elder woman|grown woman|mature carnival queen|beautiful mature woman|classic mature beauty|glam grandma/.test(lower)) return "mature masculine carnival elegance";
+  }
+
+  if (bucket === "beauty") {
+    if (/lip|gloss|lashes|makeup|eyeshadow|rhinestone tear|face gems|cheekbone|butterfly face|glitter glam|painted sun symbols|jewel-toned eyeshadow/.test(lower)) return "masculine carnival face paint only, no feminine makeup";
+  }
+
+  if (bucket === "hair") {
+    if (/silk press|body waves|waist-length|curly bob|long curls|updo|puffs|half-up|wet tropical curls/.test(lower)) return "masculine locs, braids, waves, or clean fade";
+  }
+
+  if (bucket === "costume") {
+    if (/bikini|corset|gown|dress|heels|stiletto|bodysuit|swimsuit|catsuit|two-piece|rhinestone sandals|nails/.test(lower)) return "covered masculine carnival costume with strong festival styling";
+  }
+
+  if (hasAnyPromptBlockWord(lower, MALE_PROMPT_BLOCK_WORDS)) return "";
+  return x;
+}
+
+function uniqueClean(items) {
+  const seen = new Set();
+  return items.map(function(x){ return String(x || "").trim(); })
+    .filter(Boolean)
+    .filter(function(x){ const k = x.toLowerCase(); if (seen.has(k)) return false; seen.add(k); return true; });
+}
+
+function sanitizeMaleItems(items, bucket) {
+  return uniqueClean(items.map(function(item){ return sanitizeMaleItem(item, bucket); }));
+}
+
+function maleCharacterLockText() {
+  return "MALE CHARACTER LOCK: When the selected gender includes male, man, masculine, father, son, boy, uncle, king, or men, create clearly masculine-presenting male characters only. Use masculine facial structure, broader jawline, flatter chest, male body proportions, masculine stance, masculine grooming, and male-coded carnival styling. Do not feminize male characters. Do not add feminine makeup, lipstick, lashes, glam beauty poses, feminine wigs, hourglass curves, breasts, dresses, gowns, heels, bikinis, corsets, women’s accessories, or women’s costume pieces unless the Gender selection specifically says feminine, drag, gender-fluid, or nonbinary glam.";
+}
+
+function enforceMaleSelectionCleanUp() {
+  if (selectedGenderModeStrong() !== "male") return;
+  FEMALE_ONLY_SECTIONS.concat(FEMALE_BEAUTY_SECTIONS).forEach(function(name) {
+    if (locked.has(name)) return;
+    const id = idify(name);
+    const sel = document.getElementById(id);
+    if (sel) sel.value = "none";
+    const custom = document.getElementById(id + "_custom");
+    if (custom) custom.value = "";
+  });
+  const safeMaleDefaults = {
+    "Body Type": ["masculine solid athletic build", "heroic strong frame", "broad-shouldered athletic", "muscular dancer build"],
+    "Lip Style": ["none"],
+    "Eye Makeup": ["none"],
+    "Face Details": ["masculine carnival face paint only, no feminine makeup"],
+    "Pose": ["strong parade stance", "camera-facing performer pose", "confident power stance"],
+    "Men's Caribbean Costume Style": ["satin festival shirt", "embroidered carnival vest", "masculine feather shoulder piece", "island warrior costume"],
+    "Men's Hair / Grooming": ["clean fade", "groomed goatee", "braided locs", "fresh line-up"]
+  };
+  Object.keys(safeMaleDefaults).forEach(function(name) {
+    if (locked.has(name)) return;
+    const current = val(name).toLowerCase();
+    if (!current || current === "none" || hasAnyPromptBlockWord(current, MALE_PROMPT_BLOCK_WORDS)) {
+      setSelectSmart(name, chooseFrom(name, safeMaleDefaults[name]));
+    }
+  });
+}
+
 function generatePrompt() {
   const rawPrimaryType = val("Primary Creation Type") || val("Creative Mode") || "Caribbean Carnival scene";
   const chibiMode = isChibiModeActive();
   const primaryType = chibiMode ? "true Chibi Character" : rawPrimaryType;
   const promoAddon = val("Promo / Mockup Add-On");
   const promoOn = promoAddon && promoAddon !== "Off - image only" && promoAddon !== "none";
+  enforceMaleSelectionCleanUp();
 
   function listValues(names) {
     return names.map(function(n) { return val(n); }).filter(Boolean);
@@ -1221,12 +1312,12 @@ function generatePrompt() {
     return items.slice(0, -1).join(", ") + ", and " + items[items.length - 1];
   }
 
-  const subject = listValues(["Character Count", "Character Type", "Gender", "Age Group", "Race / Ethnicity", "Body Type"]);
-  const women = listValues(["Women's Caribbean Costume Style", "Women's Hair / Beauty", "Women's Accessories", "Women's Shoes / Nails"]);
-  const men = listValues(["Men's Caribbean Costume Style", "Men's Hair / Grooming", "Men's Accessories", "Men's Pose Energy"]);
-  const beauty = listValues(["Facial Expression", "Eye Makeup", "Lip Style", "Face Details"]);
-  const hair = listValues(["Hair Style", "Hair Color"]);
-  const costume = listValues(["Costume Type", "Costume Coverage", "Feather Style", "Feather Placement", "Fabric Details"]);
+  let subject = listValues(["Character Count", "Character Type", "Gender", "Age Group", "Race / Ethnicity", "Body Type"]);
+  let women = listValues(["Women's Caribbean Costume Style", "Women's Hair / Beauty", "Women's Accessories", "Women's Shoes / Nails"]);
+  let men = listValues(["Men's Caribbean Costume Style", "Men's Hair / Grooming", "Men's Accessories", "Men's Pose Energy"]);
+  let beauty = listValues(["Facial Expression", "Eye Makeup", "Lip Style", "Face Details"]);
+  let hair = listValues(["Hair Style", "Hair Color"]);
+  let costume = listValues(["Costume Type", "Costume Coverage", "Feather Style", "Feather Placement", "Fabric Details"]);
   const action = listValues(["Pose", "Movement"]);
   const scene = listValues(["Scene Location", "Background Details", "Mood", "Story Theme"]);
   const lighting = listValues(["Lighting Style", "Light Effects"]);
@@ -1245,10 +1336,26 @@ function generatePrompt() {
   const textFields = listValues(["Main Headline", "Subheadline", "Event Date", "Tagline", "Custom Side Text", "Footer Text"]);
   const textStyle = listValues(["Typography Style", "Typography Placement", "Text Effects"]);
 
+  const genderMode = selectedGenderModeStrong();
+  if (genderMode === "male") {
+    subject = sanitizeMaleItems(subject, "subject");
+    women = [];
+    men = sanitizeMaleItems(men, "men");
+    if (!men.length) men = ["masculine carnival styling", "masculine grooming", "strong parade stance"];
+    beauty = sanitizeMaleItems(beauty, "beauty");
+    if (!beauty.length) beauty = ["masculine carnival face paint only, no feminine makeup"];
+    hair = sanitizeMaleItems(hair, "hair");
+    costume = sanitizeMaleItems(costume, "costume");
+  }
+
   let prompt = "Create a premium Caribbean Carnival AI image in " + primaryType + " style";
 
   if (chibiMode) {
     prompt += ". Use a strict CHIBI STYLE LOCK: cute small-bodied characters, oversized expressive heads, big sparkling eyes, playful rounded proportions, simplified adorable limbs, and stylized cartoon charm. Do not use realistic adult human proportions, fashion editorial realism, photo-realism, or normal model anatomy";
+  }
+
+  if (genderMode === "male") {
+    prompt += ". " + maleCharacterLockText();
   }
 
   if (subject.length) {
@@ -2024,9 +2131,10 @@ const FEMALE_ONLY_WORDS = ["female","woman","feminine","queen","goddess","girl",
 function selectedGenderMode() {
   const g = val("Gender").toLowerCase();
   const c = val("Character Type").toLowerCase();
+  const combined = g + " " + c;
 
-  if (/male|man|masculine|king|uncle/.test(g + " " + c)) return "male";
-  if (/female|woman|feminine|queen|goddess|girl|auntie/.test(g + " " + c)) return "female";
+  if (/male|man|masculine|king|uncle|father|son|boy|groom|gentleman|men/.test(combined)) return "male";
+  if (/female|woman|feminine|queen|goddess|girl|auntie|mother|daughter|lady|women/.test(combined)) return "female";
   return "neutral";
 }
 
